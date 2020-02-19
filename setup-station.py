@@ -359,7 +359,13 @@ class MyWindow(Gtk.Window):
 					columna=i
 			return model[iter][columna] == self.current_filter_language
 
-
+class Paginas_normal(Gtk.Box):
+	def __init__(self, parent,planta_fin):
+		super().__init__(spacing=10)
+		self.__parent = parent
+		grid_principal=Gtk.Grid()
+		self.pack_start(grid_principal, True, True, 0)
+		grid_principal.set_row_homogeneous(True)
 if __name__ == '__main__':
 	win = MyWindow()
 	win.connect("destroy", Gtk.main_quit)
