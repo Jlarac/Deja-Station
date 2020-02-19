@@ -1,4 +1,4 @@
-import gi
+import gi, time
 from configparser  import ConfigParser
 from Recursos import data as Recursos
 gi.require_version('Gtk', '3.0')
@@ -22,9 +22,6 @@ class MyWindow(Gtk.Window):
 		self.menu_principal.set_show_tabs(False)
 		self.add(self.menu_principal)
 
-		self.liststore_lineas=Gtk.ListStore(str)
-		self.liststore_procesos=Gtk.ListStore(str)
-
 		button = Gtk.Button()
 		icon = Gio.ThemedIcon(name="applications-system-symbolic")
 		image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
@@ -36,43 +33,72 @@ class MyWindow(Gtk.Window):
 		image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
 		button2.add(image)
 
-		ventanas_combo = Gtk.ComboBoxText()
-		ventanas_combo.set_entry_text_column(0)
-		ventanas_combo.connect("changed", self.cambio_ventanas_combo)
-		for ventana,valor in Recursos.menu_lineas_por_plantas.items():
-			ventanas_combo.append_text(ventana)
-		
-		self.lineas_combo = Gtk.ComboBox.new_with_model(self.liststore_lineas)
-		self.lineas_combo.connect("changed", self.cambio_lineas_combo)
-		renderer_text = Gtk.CellRendererText()
-		self.lineas_combo.pack_start(renderer_text, True)
-		self.lineas_combo.add_attribute(renderer_text, "text", 0)
-		
-		self.procesos_combo = Gtk.ComboBox.new_with_model(self.liststore_procesos)
-		self.procesos_combo.connect("changed", self.cambio_procesos_combo)
-		renderer_text2 = Gtk.CellRendererText()
-		self.procesos_combo.pack_start(renderer_text2, True)
-		self.procesos_combo.add_attribute(renderer_text2, "text", 0)
-		
-		ventanas_combo.set_active(0)
-		self.lineas_combo.set_active(0)
-		self.procesos_combo.set_active(0)
-		
 		caja_headerbar.add(button)
-		caja_headerbar.add(ventanas_combo)
-		caja_headerbar.add(self.lineas_combo)
-		caja_headerbar.add(self.procesos_combo)
-	
+
+		caja_headerbar.add(self.poner_etiqueta('	'+Recursos.planta+'  -  '))
+		caja_headerbar.add(self.poner_etiqueta(Recursos.linea+'  -  '))
+		caja_headerbar.add(self.poner_etiqueta(Recursos.proceso))
+
+
 		hb.pack_start(caja_headerbar)
+		#hb.pack_end(self.poner_etiqueta(time.strftime("%H:%M:%S")))
+		#hb.pack_end(self.poner_etiqueta(time.strftime("%d/%m/%y")))
 		hb.pack_end(button2)
 
-		pagina = Paginas_normal(self.menu_principal,'Planta 1')
-		self.menu_principal.append_page(pagina)
-		self.box_configuraciones=Gtk.Box(spacing=16)
-		#self.box_configuraciones.set_column_homogeneous(True)
-		self.ventana_configuracion()
-		self.menu_principal.append_page(self.box_configuraciones)
+		self.box_paginas=Gtk.Box(spacing=16)
+		self.ventana_pagina()
+		self.menu_principal.append_page(self.box_paginas)
 
+		#self.box_configuraciones=Gtk.Box(spacing=16)
+		#self.ventana_configuracion()
+		#self.menu_principal.append_page(self.box_configuraciones)
+
+	def poner_etiqueta(self,texto):
+		label=Gtk.Label()
+		label.set_text(texto)
+		label.set_valign(Gtk.Align.CENTER)
+		return label
+	def ventana_pagina(self):
+		grid_pagina=Gtk.Grid()
+
+		box_encabezado=Gtk.Box(spacing=16)
+
+		frame=Gtk.Frame()
+
+		
+		grid_1=Gtk.Grid()
+		label=self.poner_etiqueta('Numero de serie')
+		self.entrada_escaner = Gtk.Entry()
+		self.entrada_escaner.set_valign(Gtk.Align.CENTER)
+		grid_1.attach(label, 0, 0, 1, 1)
+		grid_1.attach_next_to(self.entrada_escaner, label, Gtk.PositionType.BOTTOM, 1, 1)
+
+		grid_2=Gtk.Grid()
+		label2=self.poner_etiqueta('FlexFlow')
+		ff_switch = Gtk.Switch()
+		ff_switch.connect("notify::active", self.on_switch_activated)
+		ff_switch.set_active(False)
+		grid_2.attach(label2, 0, 0, 1, 1)
+		grid_2.attach_next_to(ff_switch, label2, Gtk.PositionType.RIGHT, 1, 1)
+
+		box_encabezado.pack_start(grid_1, True, False, 0)
+		box_encabezado.pack_end(grid_2, True, False, 0)
+
+		self.liststore_base_datos = Gtk.ListStore(str,str,str,str,str,str,str)
+		for planta,valor in Recursos.base_de_datos.items():
+			self.liststore_base_datos.append(valor)
+		self.treeview = Gtk.TreeView.new_with_model(self.liststore_base_datos)
+
+		for i, column_title in enumerate(['N. Serie','P. Inicial','P. Final','Delta P.','Estado','Fecha','Hora']):
+			renderer = Gtk.CellRendererText()
+			renderer.set_alignment(0.5,0)
+			column = Gtk.TreeViewColumn(column_title, renderer, text=i)
+			self.treeview.append_column(column)
+
+		grid_pagina.attach(box_encabezado, 0, 0, 1, 1)
+		grid_pagina.attach_next_to(self.treeview,box_encabezado,Gtk.PositionType.BOTTOM,1,1)
+		
+		self.box_paginas.pack_start(grid_pagina, True, False, 0)
 	def ventana_configuracion(self):
 		#grid_configuraciones=Gtk.Grid()
 
@@ -309,7 +335,12 @@ class MyWindow(Gtk.Window):
 		#self.menu_principal.append_page(self.page2,self.texto)
 
 
-
+	def on_switch_activated(self, switch, gparam):
+		if switch.get_active():
+			state = "on"
+		else:
+			state = "off"
+		print("Switch was turned", state)
 		
 
 	def ventana_ppap(self):
@@ -359,13 +390,6 @@ class MyWindow(Gtk.Window):
 					columna=i
 			return model[iter][columna] == self.current_filter_language
 
-class Paginas_normal(Gtk.Box):
-	def __init__(self, parent,planta_fin):
-		super().__init__(spacing=10)
-		self.__parent = parent
-		grid_principal=Gtk.Grid()
-		self.pack_start(grid_principal, True, True, 0)
-		grid_principal.set_row_homogeneous(True)
 if __name__ == '__main__':
 	win = MyWindow()
 	win.connect("destroy", Gtk.main_quit)
