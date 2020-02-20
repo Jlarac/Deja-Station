@@ -1,20 +1,31 @@
-import gi, time
+import gi,datetime
 from configparser  import ConfigParser
 from Recursos import data as Recursos
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, GLib, Gdk, Gio
+from gi.repository import Gtk, GLib, Gdk, Gio, GdkPixbuf
 
+
+program = 'Deja Station'
+version = '0.0.1'
+copyright = '(c) Jlara Industries'
+comments = 'Programa para estacion de trabajo y recopilacion de datos'
+website = 'https://github.com/Jlarac/Deja-Station'
+nameicon = 'python.png'
+autors = ['Jairo Lara']
 hb = Gtk.HeaderBar()
 hb.set_show_close_button(True)
-hb.props.title = Recursos.nombre_empresa
+hb.props.title = program
+hb.props.subtitle = Recursos.nombre_empresa
 caja_headerbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+
 
 class MyWindow(Gtk.Window):
 	def __init__(self):
 		Gtk.Window.__init__(self)
 		self.set_default_size(800, 500)
 		self.set_titlebar(hb)
+		self.set_icon_from_file(nameicon)
 		self.ventana_actual,self.linea_actual,self.proceso_actual=[],[],[]
 
 		self.menu_principal=Gtk.Notebook()
@@ -22,33 +33,32 @@ class MyWindow(Gtk.Window):
 		self.menu_principal.set_show_tabs(False)
 		self.add(self.menu_principal)
 
+		self.now=datetime.datetime.now()
+		self.weeknum=datetime.date(self.now.year, self.now.month, self.now.day).isocalendar()[1]
+		self.fecha=str(self.now.day)+'/'+str(self.now.month)+'/'+str(self.now.year)
+		self.hora=str(self.now.hour)+':'+str(self.now.minute)+':'+str(self.now.second)
+
 		button = Gtk.Button()
 		icon = Gio.ThemedIcon(name="applications-system-symbolic")
 		image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
 		button.add(image)
 		button.connect('clicked',self.ir_ventana_configuracion)
-
 		button2 = Gtk.Button()
 		icon = Gio.ThemedIcon(name="preferences-system-details-symbolic")
 		image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
+		button2.connect('clicked',self.ventana_acerca)
 		button2.add(image)
-
+		self.entrada_busqueda=Gtk.SearchEntry()
 		caja_headerbar.add(button)
-
 		caja_headerbar.add(self.poner_etiqueta('	'+Recursos.planta+'  -  '))
 		caja_headerbar.add(self.poner_etiqueta(Recursos.linea+'  -  '))
 		caja_headerbar.add(self.poner_etiqueta(Recursos.proceso))
-
-
 		hb.pack_start(caja_headerbar)
-		#hb.pack_end(self.poner_etiqueta(time.strftime("%H:%M:%S")))
-		#hb.pack_end(self.poner_etiqueta(time.strftime("%d/%m/%y")))
 		hb.pack_end(button2)
-
-		self.box_paginas=Gtk.Box(spacing=16)
+		hb.pack_end(self.entrada_busqueda)
+		self.box_paginas=Gtk.Box(spacing=50)
 		self.ventana_pagina()
 		self.menu_principal.append_page(self.box_paginas)
-
 		#self.box_configuraciones=Gtk.Box(spacing=16)
 		#self.ventana_configuracion()
 		#self.menu_principal.append_page(self.box_configuraciones)
@@ -60,45 +70,50 @@ class MyWindow(Gtk.Window):
 		return label
 	def ventana_pagina(self):
 		grid_pagina=Gtk.Grid()
-
 		box_encabezado=Gtk.Box(spacing=16)
+		box_encabezado.set_hexpand(True)
 
-		frame=Gtk.Frame()
-
-		
 		grid_1=Gtk.Grid()
+		grid_1.set_column_spacing(15)
+		grid_1.set_row_spacing(15)
+
 		label=self.poner_etiqueta('Numero de serie')
 		self.entrada_escaner = Gtk.Entry()
 		self.entrada_escaner.set_valign(Gtk.Align.CENTER)
 		grid_1.attach(label, 0, 0, 1, 1)
-		grid_1.attach_next_to(self.entrada_escaner, label, Gtk.PositionType.BOTTOM, 1, 1)
+		grid_1.attach_next_to(self.entrada_escaner, label, Gtk.PositionType.RIGHT, 1, 1)
 
 		grid_2=Gtk.Grid()
+		grid_2.set_column_spacing(15)
+		grid_2.set_row_spacing(15)
 		label2=self.poner_etiqueta('FlexFlow')
 		ff_switch = Gtk.Switch()
 		ff_switch.connect("notify::active", self.on_switch_activated)
-		ff_switch.set_active(False)
+		ff_switch.set_active(True)
 		grid_2.attach(label2, 0, 0, 1, 1)
 		grid_2.attach_next_to(ff_switch, label2, Gtk.PositionType.RIGHT, 1, 1)
 
-		box_encabezado.pack_start(grid_1, True, False, 0)
-		box_encabezado.pack_end(grid_2, True, False, 0)
-
-		self.liststore_base_datos = Gtk.ListStore(str,str,str,str,str,str,str)
-		for planta,valor in Recursos.base_de_datos.items():
-			self.liststore_base_datos.append(valor)
+		box_encabezado.pack_start(grid_1, True, True, 0)
+		box_encabezado.pack_end(grid_2, False, False, 0)
+		box_encabezado.set_hexpand(True)
+		
+		self.liststore_base_datos = Gtk.ListStore(str,str,str,str,str,str,str,str)
+		for valor in sorted(Recursos.base_de_datos.keys(),reverse=True):
+			if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
+				self.liststore_base_datos.append(Recursos.base_de_datos[valor])
 		self.treeview = Gtk.TreeView.new_with_model(self.liststore_base_datos)
-
-		for i, column_title in enumerate(['N. Serie','P. Inicial','P. Final','Delta P.','Estado','Fecha','Hora']):
+		self.treeview.set_hexpand(True)
+		self.treeview.set_vexpand(True)
+		for i, column_title in enumerate(['N. Serie','P. Inicial','P. Final','Delta P.','Estado','Fecha','Hora','Semana']):
 			renderer = Gtk.CellRendererText()
-			renderer.set_alignment(0.5,0)
 			column = Gtk.TreeViewColumn(column_title, renderer, text=i)
+			column.set_expand(True)
+			column.set_resizable(True)
 			self.treeview.append_column(column)
 
 		grid_pagina.attach(box_encabezado, 0, 0, 1, 1)
 		grid_pagina.attach_next_to(self.treeview,box_encabezado,Gtk.PositionType.BOTTOM,1,1)
-		
-		self.box_paginas.pack_start(grid_pagina, True, False, 0)
+		self.box_paginas.pack_start(grid_pagina, True, True, 0)
 	def ventana_configuracion(self):
 		#grid_configuraciones=Gtk.Grid()
 
@@ -192,7 +207,18 @@ class MyWindow(Gtk.Window):
 		#grid_configuraciones.attach_next_to(grid___,grid_configuraciones, Gtk.PositionType.BOTTOM, 1, 1)
 
 		#self.box_configuraciones.pack_start(grid_configuraciones, True, False, 0)
-
+	def ventana_acerca(self, widget):
+		about = Gtk.AboutDialog()
+		about.set_program_name(program)
+		about.set_version(version)
+		about.set_authors(autors)
+		about.set_copyright(copyright)
+		about.set_comments(comments)
+		about.set_website(website)
+		icon=GdkPixbuf.Pixbuf.new_from_file(nameicon)
+		about.set_logo(icon)
+		about.run()
+		about.destroy()
 		
 	def agregar_planta(self, widget):
 		if self.entry_agregar_planta.get_text() != "":

@@ -12,7 +12,6 @@ class datos(object):
 		parser.read('Linea_prueba.cfg')
 		for numero_serie in parser.sections():
 			self.base_de_datos[numero_serie]=[]
-			self.base_de_datos[numero_serie].append(numero_serie)
 			for clave,valor in parser.items(numero_serie):
 				self.base_de_datos[numero_serie].append(valor)
 	def guardar_configuraciones(self):
