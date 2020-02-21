@@ -1,4 +1,4 @@
-import gi,datetime
+import gi,datetime,cairo,math
 from configparser  import ConfigParser
 from Recursos import data as Recursos
 gi.require_version('Gtk', '3.0')
@@ -7,7 +7,7 @@ from gi.repository import Gtk, GLib, Gdk, Gio, GdkPixbuf
 
 
 program = 'Deja Station'
-version = '0.0.1'
+version = '0.1.1'
 copyright = '(c) Jlara Industries'
 comments = 'Programa para estacion de trabajo y recopilacion de datos'
 website = 'https://github.com/Jlarac/Deja-Station'
@@ -29,7 +29,6 @@ class MyWindow(Gtk.Window):
 		self.ventana_actual,self.linea_actual,self.proceso_actual=[],[],[]
 
 		self.menu_principal=Gtk.Notebook()
-		#self.menu_principal.set_tab_pos(Gtk.PositionType.LEFT)
 		self.menu_principal.set_show_tabs(False)
 		self.add(self.menu_principal)
 
@@ -49,6 +48,7 @@ class MyWindow(Gtk.Window):
 		button2.connect('clicked',self.ventana_acerca)
 		button2.add(image)
 		self.entrada_busqueda=Gtk.SearchEntry()
+		self.entrada_busqueda.connect('search_changed',self.iniciar_busqueda)
 		caja_headerbar.add(button)
 		caja_headerbar.add(self.poner_etiqueta('	'+Recursos.planta+'  -  '))
 		caja_headerbar.add(self.poner_etiqueta(Recursos.linea+'  -  '))
@@ -73,25 +73,41 @@ class MyWindow(Gtk.Window):
 		box_encabezado=Gtk.Box(spacing=16)
 		box_encabezado.set_hexpand(True)
 
+		#area_dibujo=Gtk.DrawingArea()
+		#area_dibujo.connect("expose-event", self.expose)
+		#self.double_buffer = cairo.ImageSurface(cairo.FORMAT_ARGB32,widget.get_allocated_width(),widget.get_allocated_height())
+		#resultado=cairo.Rectangle(0,0,50,50)
+
+		color_ultima_pieza=Gtk.ColorButton(show_editor=False)
+		#color_ultima_pieza.show_editor(False)
+		color_verde=Gdk.RGBA()
+		color_verde.red=0.0
+		color_verde.green=1.0
+		color_verde.blue=0.0
+		color_verde.alpha=1.0
+		color_ultima_pieza.set_rgba(color_verde)
+		color_ultima_pieza.set_title('Label')
+
+
 		grid_1=Gtk.Grid()
 		grid_1.set_column_spacing(15)
 		grid_1.set_row_spacing(15)
 
 		label=self.poner_etiqueta('Numero de serie')
 		self.entrada_escaner = Gtk.Entry()
+		self.entrada_escaner.connect('activate',self.entrada_escaner_enter)
 		self.entrada_escaner.set_valign(Gtk.Align.CENTER)
 		grid_1.attach(label, 0, 0, 1, 1)
 		grid_1.attach_next_to(self.entrada_escaner, label, Gtk.PositionType.RIGHT, 1, 1)
-
 		grid_2=Gtk.Grid()
 		grid_2.set_column_spacing(15)
 		grid_2.set_row_spacing(15)
 		label2=self.poner_etiqueta('FlexFlow')
-		ff_switch = Gtk.Switch()
-		ff_switch.connect("notify::active", self.on_switch_activated)
-		ff_switch.set_active(True)
+		self.ff_switch = Gtk.Switch()
+		self.ff_switch.connect("notify::active", self.on_switch_activated)
+		self.ff_switch.set_active(True)
 		grid_2.attach(label2, 0, 0, 1, 1)
-		grid_2.attach_next_to(ff_switch, label2, Gtk.PositionType.RIGHT, 1, 1)
+		grid_2.attach_next_to(self.ff_switch, label2, Gtk.PositionType.RIGHT, 1, 1)
 
 		box_encabezado.pack_start(grid_1, True, True, 0)
 		box_encabezado.pack_end(grid_2, False, False, 0)
@@ -101,9 +117,14 @@ class MyWindow(Gtk.Window):
 		for valor in sorted(Recursos.base_de_datos.keys(),reverse=True):
 			if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
 				self.liststore_base_datos.append(Recursos.base_de_datos[valor])
-		self.treeview = Gtk.TreeView.new_with_model(self.liststore_base_datos)
-		self.treeview.set_hexpand(True)
-		self.treeview.set_vexpand(True)
+
+		self.current_filter_language = None
+		self.language_filter = self.liststore_base_datos.filter_new()
+		self.language_filter.set_visible_func(self.language_filter_func)
+
+		self.scrollable_treelist = Gtk.ScrolledWindow()
+		self.scrollable_treelist.set_vexpand(True)
+		self.treeview = Gtk.TreeView.new_with_model(self.language_filter)
 		for i, column_title in enumerate(['N. Serie','P. Inicial','P. Final','Delta P.','Estado','Fecha','Hora','Semana']):
 			renderer = Gtk.CellRendererText()
 			column = Gtk.TreeViewColumn(column_title, renderer, text=i)
@@ -111,8 +132,11 @@ class MyWindow(Gtk.Window):
 			column.set_resizable(True)
 			self.treeview.append_column(column)
 
-		grid_pagina.attach(box_encabezado, 0, 0, 1, 1)
-		grid_pagina.attach_next_to(self.treeview,box_encabezado,Gtk.PositionType.BOTTOM,1,1)
+		grid_pagina.attach(color_ultima_pieza, 0, 0, 1, 1)
+		grid_pagina.attach_next_to(box_encabezado,color_ultima_pieza,Gtk.PositionType.BOTTOM,1,1)
+		grid_pagina.attach_next_to(self.scrollable_treelist,box_encabezado,Gtk.PositionType.BOTTOM,1,1)
+
+		self.scrollable_treelist.add(self.treeview)
 		self.box_paginas.pack_start(grid_pagina, True, True, 0)
 	def ventana_configuracion(self):
 		#grid_configuraciones=Gtk.Grid()
@@ -281,85 +305,31 @@ class MyWindow(Gtk.Window):
 			self.menu_principal.set_current_page(1)
 		else:
 			self.menu_principal.set_current_page(0)
+	def language_filter_func(self, model, iter, data):
+		columna=0
+		if self.current_filter_language is None or self.current_filter_language == "None" or self.current_filter_language == "":
+			return True
+		else:
+			for i in range(8):
+				if model[iter][i] == self.current_filter_language:
+					columna=i
+			return model[iter][columna] == self.current_filter_language
+	def iniciar_busqueda(self,widget):
+		if widget.get_text()!="":
+			self.liststore_base_datos.clear()
+			for valor in sorted(Recursos.base_de_datos.keys(),reverse=True):
+				self.liststore_base_datos.append(Recursos.base_de_datos[valor])
+		else:
+			self.liststore_base_datos.clear()
+			for valor in sorted(Recursos.base_de_datos.keys(),reverse=True):
+				if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
+					self.liststore_base_datos.append(Recursos.base_de_datos[valor])
+		self.current_filter_language = widget.get_text()
+		self.language_filter.refilter()
 
-
-
-	def ventana_pfmea(self):
-		#self.page2=Gtk.Box()
-		#self.page2.set_border_width(10)
-
-		#456 000 000 000 * 20
-
-		#self.grid = Gtk.Grid()
-		#self.page2.add(self.grid)
-		#self.grid.set_column_homogeneous(True)
-		#self.grid.set_row_homogeneous(True)
-
-
-		self.entry_filtro = Gtk.Entry()
-
-		button_filtro = Gtk.Button.new_with_label('Filtro')
-		#button_filtro
-		button_borrar_filtro = Gtk.Button.new_with_label('Borrar')
-		button_filtro.connect("clicked", self.filtro_boton)
-		button_borrar_filtro.connect("clicked", self.filtro_boton_borrar)
-		#button_filtro.set_text()
-
-		#Creating the ListStore model
-		self.software_liststore = Gtk.ListStore(str, int, str)
-		for software_ref in software_list:	self.software_liststore.append(list(software_ref))
-		self.current_filter_language = None
-
-		#Creating the filter, feeding it with the liststore model
-		self.language_filter = self.software_liststore.filter_new()
-		#setting the filter function, note that we're not using the
-		self.language_filter.set_visible_func(self.language_filter_func)
-		#creating the treeview, making it use the filter as a model, and adding the columns
-		self.treeview = Gtk.TreeView.new_with_model(self.language_filter)
-
-		for i, column_title in enumerate(["Software", "Release Year", "Programming Language"]):
-			#print(i, column_title)
-			button = Gtk.Button.new_with_label(column_title)
-			renderer = Gtk.CellRendererText()
-			column = Gtk.TreeViewColumn(column_title, renderer, text=i)
-			self.treeview.append_column(column)
-
-		#creating buttons to filter by programming language, and setting up their events
-		#self.buttons = list()
-		#for prog_language in ["Java", "C", "C++", "Python", "None"]:
-		#	button = Gtk.Button(prog_language)
-		#	self.buttons.append(button)
-		#	button.connect("clicked", self.on_selection_button_clicked)
-
-		
-
-
-		#vbox.pack_start(self.entry, True, True, 0)
-		#setting up the layout, putting the treeview in a scrollwindow, and the buttons in a row
-		self.scrollable_treelist = Gtk.ScrolledWindow()
-		self.scrollable_treelist.set_vexpand(True)
-
-
-		#self.grid.attach(self.scrollable_treelist, 0, 0, 8, 10)
-
-		self.grid.attach(button_borrar_filtro, 0, 0, 1, 1)
-		#self.grid.attach_next_to(self.entry, self.scrollable_treelist, Gtk.PositionType.BOTTOM, 1, 1)
-		self.grid.attach_next_to(self.entry_filtro, button_borrar_filtro, Gtk.PositionType.RIGHT, 8, 1)
-		self.grid.attach_next_to(button_filtro, self.entry_filtro, Gtk.PositionType.RIGHT, 1, 1)
-		#self.grid.attach_next_to(self.buttons[0], self.entry, Gtk.PositionType.RIGHT, 1, 1)
-		self.grid.attach_next_to(self.scrollable_treelist, self.entry_filtro, Gtk.PositionType.BOTTOM, 8, 10)
-		
-		#self.grid.attach_next_to(self.buttons[0], self.scrollable_treelist, Gtk.PositionType.BOTTOM, 1, 1)
-		#for i, button in enumerate(self.buttons[1:]):
-		#	self.grid.attach_next_to(button, self.buttons[i], Gtk.PositionType.RIGHT, 1, 1)
-
-		self.scrollable_treelist.add(self.treeview)
-
-
-		#self.texto=Gtk.Label()
-		#self.texto.set_text('PFMEA')
-		#self.menu_principal.append_page(self.page2,self.texto)
-
+	def entrada_escaner_enter(self,widget):
+		print(widget.get_text())
+		print('FlexFlow', self.ff_switch.get_state())
 
 	def on_switch_activated(self, switch, gparam):
 		if switch.get_active():
@@ -402,19 +372,7 @@ class MyWindow(Gtk.Window):
 	def on_button_clicked(self, widget):
 		print(widget.get_label())
 
-	def language_filter_func(self, model, iter, data):
-		columna=0
-		if self.current_filter_language is None or self.current_filter_language == "None":
-			return True
-		else:
-			try:
-				self.current_filter_language=int(self.current_filter_language)
-			except:
-				pass
-			for i in range(3):
-				if model[iter][i] == self.current_filter_language:
-					columna=i
-			return model[iter][columna] == self.current_filter_language
+	
 
 if __name__ == '__main__':
 	win = MyWindow()
