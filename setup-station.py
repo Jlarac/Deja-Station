@@ -1,4 +1,8 @@
 import gi,datetime,cairo,math
+
+import sys
+sys.path.append("C:/msys64/usr/lib/python3.7/site-packages")
+import serial
 from configparser  import ConfigParser
 from Recursos import data as Recursos
 gi.require_version('Gtk', '3.0')
@@ -13,6 +17,12 @@ website = 'https://github.com/Jlarac/Deja-Station'
 nameicon = 'python.png'
 autors = ['Jairo Lara']
 
+try:
+	ser = serial.Serial(port='/dev/COM1',baudrate=9600,)
+	print(ser.isOpen())
+except:
+	print('Serial port is not connected')
+
 
 class MyWindow(Gtk.Window):
 	def __init__(self):
@@ -21,6 +31,7 @@ class MyWindow(Gtk.Window):
 		self.cargar_headerbar_paginas()
 		self.set_icon_from_file(nameicon)
 		self.ventana_actual,self.linea_actual,self.proceso_actual=[],[],[]
+		self.analizando=False
 
 		screen = Gdk.Screen.get_default()
 		provider = Gtk.CssProvider()
@@ -38,10 +49,9 @@ class MyWindow(Gtk.Window):
 		self.add(self.menu_principal)
 
 		self.now=datetime.datetime.now()
-		self.weeknum=datetime.date(self.now.year, self.now.month, self.now.day).isocalendar()[1]
+		self.weeknum=str(datetime.date(self.now.year, self.now.month, self.now.day).isocalendar()[1])
 		self.fecha=str(self.now.day)+'/'+str(self.now.month)+'/'+str(self.now.year)
 		self.hora=str(self.now.hour)+':'+str(self.now.minute)+':'+str(self.now.second)
-
 		
 		self.box_paginas=Gtk.Box(spacing=5)
 		self.ventana_pagina()
@@ -50,7 +60,6 @@ class MyWindow(Gtk.Window):
 		self.box_configuraciones.set_hexpand(True)
 		self.ventana_configuracion()
 		self.menu_principal.append_page(self.box_configuraciones)
-
 	def cargar_headerbar_paginas(self):
 		self.hb = Gtk.HeaderBar()
 		self.hb.set_show_close_button(True)
@@ -113,8 +122,11 @@ class MyWindow(Gtk.Window):
 		self.entrada_escaner = Gtk.Entry()
 		self.entrada_escaner.connect('activate',self.entrada_escaner_enter)
 		self.entrada_escaner.set_valign(Gtk.Align.CENTER)
+		self.serie_analizando=self.poner_etiqueta('')
 		grid_1.attach(label, 0, 0, 1, 1)
 		grid_1.attach_next_to(self.entrada_escaner, label, Gtk.PositionType.RIGHT, 1, 1)
+		grid_1.attach_next_to(self.serie_analizando,self.entrada_escaner, Gtk.PositionType.RIGHT, 1, 1)
+		#grid_1.attach_next_to(boton_cancelar_analizando,self.serie_analizando, Gtk.PositionType.RIGHT, 1, 1)
 		grid_2=Gtk.Grid()
 		grid_2.set_column_spacing(15)
 		grid_2.set_row_spacing(15)
@@ -122,17 +134,24 @@ class MyWindow(Gtk.Window):
 		self.ff_switch = Gtk.Switch()
 		self.ff_switch.connect("notify::active", self.on_switch_activated)
 		self.ff_switch.set_active(True)
+		boton_cancelar_analizando=Gtk.Button()
+		boton_cancelar_analizando.set_label('Cancelar')
+		boton_cancelar_analizando.connect('clicked',self.cancelar_analisis)
 		grid_2.attach(label2, 0, 0, 1, 1)
 		grid_2.attach_next_to(self.ff_switch, label2, Gtk.PositionType.RIGHT, 1, 1)
+		grid_2.attach_next_to(boton_cancelar_analizando,label2, Gtk.PositionType.LEFT, 1, 1)
 
 		box_encabezado.pack_start(grid_1, True, True, 0)
 		box_encabezado.pack_end(grid_2, False, True, 0)
 		box_encabezado.set_hexpand(True)
 		
 		self.liststore_base_datos = Gtk.ListStore(str,str,str,str,str,str,str,str)
-		for valor in sorted(Recursos.base_de_datos.keys(),reverse=True):
+		valores_semanal=[]
+		for valor in Recursos.base_de_datos.keys():
 			if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
-				self.liststore_base_datos.append(Recursos.base_de_datos[valor])
+				valores_semanal.append(Recursos.base_de_datos[valor])
+		for valor in range(len(valores_semanal)-1,-1,-1):
+			self.liststore_base_datos.append(valores_semanal[valor])
 
 		self.current_filter_language = None
 		self.language_filter = self.liststore_base_datos.filter_new()
@@ -460,17 +479,27 @@ class MyWindow(Gtk.Window):
 	def iniciar_busqueda(self,widget):
 		if widget.get_text()!="":
 			self.liststore_base_datos.clear()
-			for valor in sorted(Recursos.base_de_datos.keys(),reverse=True):
-				self.liststore_base_datos.append(Recursos.base_de_datos[valor])
+			valores_semanal=[]
+			for valor in Recursos.base_de_datos.keys():
+				valores_semanal.append(Recursos.base_de_datos[valor])
+			for valor in range(len(valores_semanal)-1,-1,-1):
+				self.liststore_base_datos.append(valores_semanal[valor])
 		else:
 			self.liststore_base_datos.clear()
-			for valor in sorted(Recursos.base_de_datos.keys(),reverse=True):
+			valores_semanal=[]
+			for valor in Recursos.base_de_datos.keys():
 				if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
-					self.liststore_base_datos.append(Recursos.base_de_datos[valor])
+					valores_semanal.append(Recursos.base_de_datos[valor])
+			for valor in range(len(valores_semanal)-1,-1,-1):
+				self.liststore_base_datos.append(valores_semanal[valor])
 		self.current_filter_language = widget.get_text()
 		self.language_filter.refilter()
 
-
+	def cancelar_analisis(self,widget):
+		self.serie_analizando.set_text('')
+		self.entrada_escaner.set_text('')
+		self.analizando=False
+		self.entrada_escaner.set_editable(True)
 
 
 	def cambio_entradas_configuraciones(self,widget):
@@ -486,8 +515,27 @@ class MyWindow(Gtk.Window):
 		self.hb.props.subtitle = Recursos.nombre_empresa
 		self.url_estacion.set_text('	'+Recursos.planta+'  -  '+Recursos.linea+'  -  '+Recursos.proceso)
 	def entrada_escaner_enter(self,widget):
-		print(widget.get_text())
-		print('FlexFlow', self.ff_switch.get_state())
+		if widget.get_text()!='':
+			self.entrada_escaner.set_editable(False)
+			self.analizando=True
+			self.serie_analizando.set_text(widget.get_text())
+			self.guardar_analisis()
+	def guardar_analisis(self):
+		paso_actual=str(len(Recursos.base_de_datos)+1)
+		datos=[self.entrada_escaner.get_text(),'7.5','7.2','0.3','PASO',self.fecha,self.hora,self.weeknum]
+		Recursos.base_de_datos[paso_actual]=datos
+		Recursos.guardar_base_datos(paso_actual,datos)
+		self.liststore_base_datos.clear()
+		valores_semanal=[]
+		for valor in Recursos.base_de_datos.keys():
+			if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
+				valores_semanal.append(Recursos.base_de_datos[valor])
+		for valor in range(len(valores_semanal)-1,-1,-1):
+			self.liststore_base_datos.append(valores_semanal[valor])
+		self.serie_analizando.set_text('')
+		self.entrada_escaner.set_text('')
+		self.analizando=False
+		self.entrada_escaner.set_editable(True)
 
 	def on_switch_activated(self, switch, gparam):
 		if switch.get_active():
