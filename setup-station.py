@@ -1,8 +1,7 @@
-import gi,datetime,cairo,math
-
-import sys
+import gi,datetime,cairo,math,threading,sys,time
 sys.path.append("C:/msys64/usr/lib/python3.7/site-packages")
 import serial
+import serial.tools.list_ports
 from configparser  import ConfigParser
 from Recursos import data as Recursos
 gi.require_version('Gtk', '3.0')
@@ -17,13 +16,6 @@ website = 'https://github.com/Jlarac/Deja-Station'
 nameicon = 'python.png'
 autors = ['Jairo Lara']
 
-try:
-	ser = serial.Serial(port='/dev/COM1',baudrate=9600,)
-	print(ser.isOpen())
-except:
-	print('Serial port is not connected')
-
-
 class MyWindow(Gtk.Window):
 	def __init__(self):
 		Gtk.Window.__init__(self)
@@ -31,18 +23,12 @@ class MyWindow(Gtk.Window):
 		self.cargar_headerbar_paginas()
 		self.set_icon_from_file(nameicon)
 		self.ventana_actual,self.linea_actual,self.proceso_actual=[],[],[]
-		self.analizando=False
+		self.analizando,self.serial_port,self.puerto=False,False,''
+		self.conectar_puerto()
 
-		screen = Gdk.Screen.get_default()
-		provider = Gtk.CssProvider()
-		style_context = Gtk.StyleContext()
-		style_context.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-		css = b"""
-		.entry {
-		    background: orange;
-		}
-		"""
-		provider.load_from_data(css)
+		t = threading.Thread(target=self.escuchando_puerto)
+		t.daemon = True
+		t.start()
 
 		self.menu_principal=Gtk.Notebook()
 		self.menu_principal.set_show_tabs(False)
@@ -50,7 +36,7 @@ class MyWindow(Gtk.Window):
 
 		self.now=datetime.datetime.now()
 		self.weeknum=str(datetime.date(self.now.year, self.now.month, self.now.day).isocalendar()[1])
-		self.fecha=str(self.now.day)+'/'+str(self.now.month)+'/'+str(self.now.year)
+		self.fecha=str(self.now.month)+'/'+str(self.now.day)+'/'+str(self.now.year)
 		self.hora=str(self.now.hour)+':'+str(self.now.minute)+':'+str(self.now.second)
 		
 		self.box_paginas=Gtk.Box(spacing=5)
@@ -60,6 +46,10 @@ class MyWindow(Gtk.Window):
 		self.box_configuraciones.set_hexpand(True)
 		self.ventana_configuracion()
 		self.menu_principal.append_page(self.box_configuraciones)
+		if self.serial_port:
+			self.mensaje('Conectado puerto: '+self.puerto)
+		else:
+			self.mensaje('No conectado a puerto serial')
 	def cargar_headerbar_paginas(self):
 		self.hb = Gtk.HeaderBar()
 		self.hb.set_show_close_button(True)
@@ -109,10 +99,9 @@ class MyWindow(Gtk.Window):
 		#color_ultima_pieza.set_property("show-editor", False)
 		#color_ultima_pieza.props.show_editor=False
 
-		#eventobox=Gtk.EventBox()
-		#eventobox.override_background_color(0,color_verde)
-		#eventobox.add(self.poner_etiqueta('LISTO'))
-
+		eventobox=Gtk.EventBox()
+		self.mensaje_eventobox_pagina=self.poner_etiqueta('Programa iniciado correctamente')
+		eventobox.add(self.mensaje_eventobox_pagina)
 
 		grid_1=Gtk.Grid()
 		grid_1.set_column_spacing(15)
@@ -126,7 +115,6 @@ class MyWindow(Gtk.Window):
 		grid_1.attach(label, 0, 0, 1, 1)
 		grid_1.attach_next_to(self.entrada_escaner, label, Gtk.PositionType.RIGHT, 1, 1)
 		grid_1.attach_next_to(self.serie_analizando,self.entrada_escaner, Gtk.PositionType.RIGHT, 1, 1)
-		#grid_1.attach_next_to(boton_cancelar_analizando,self.serie_analizando, Gtk.PositionType.RIGHT, 1, 1)
 		grid_2=Gtk.Grid()
 		grid_2.set_column_spacing(15)
 		grid_2.set_row_spacing(15)
@@ -167,7 +155,8 @@ class MyWindow(Gtk.Window):
 			column.set_resizable(True)
 			self.treeview.append_column(column)
 
-		grid_pagina.attach(box_encabezado, 0, 0, 1, 1)
+		grid_pagina.attach(eventobox, 0, 0, 1, 1)
+		grid_pagina.attach_next_to(box_encabezado,eventobox,Gtk.PositionType.BOTTOM,1,1)
 		grid_pagina.attach_next_to(self.scrollable_treelist,box_encabezado,Gtk.PositionType.BOTTOM,1,1)
 
 		grid_pagina.set_column_spacing(10)
@@ -176,12 +165,9 @@ class MyWindow(Gtk.Window):
 		self.scrollable_treelist.add(self.treeview)
 		self.box_paginas.pack_start(grid_pagina, True, True, 0)
 	def ventana_configuracion(self):
-
 		grid_principal=Gtk.Grid()
-
 		grid_principal.set_column_spacing(50)
 		grid_principal.set_row_spacing(50)
-
 		self.action_bar=Gtk.ActionBar()
 		self.action_bar.set_hexpand(True)
 
@@ -191,16 +177,28 @@ class MyWindow(Gtk.Window):
 		button2.connect('clicked',self.cambio_entradas_configuraciones)
 		button2.add(image)
 
+		label9=self.poner_etiqueta('Puertos')
+		self.puertos_liststore = Gtk.ListStore(str)
+		try:
+			for valor in self.serial_ports:
+				self.puertos_liststore.append([valor])
+		except:
+			pass
+		self.puertos_combo = Gtk.ComboBox.new_with_model(self.puertos_liststore)
+		renderer_text = Gtk.CellRendererText()
+		self.puertos_combo.pack_start(renderer_text, True)
+		self.puertos_combo.add_attribute(renderer_text, "text", 0)
+		self.puertos_combo.set_active(0)
+
 		label=self.poner_etiqueta('Guardar')
-
-
+		self.action_bar.pack_start(label9)
+		self.action_bar.pack_start(self.puertos_combo)
 		self.action_bar.pack_end(button2)
 		self.action_bar.pack_end(label)
 
 		grid_configuraciones=Gtk.Grid()
 		grid_configuraciones.set_column_spacing(15)
 		grid_configuraciones.set_row_spacing(15)
-
 		grid_configuraciones2=Gtk.Grid()
 		grid_configuraciones2.set_column_spacing(15)
 		grid_configuraciones2.set_row_spacing(15)
@@ -208,191 +206,62 @@ class MyWindow(Gtk.Window):
 		label=self.poner_etiqueta('Empresa')
 		self.entrada_empresa = Gtk.Entry()
 		self.entrada_empresa.set_text(Recursos.nombre_empresa)
-		#self.entrada_empresa.connect('activate',self.cambio_entradas_configuraciones)
 		self.entrada_empresa.set_valign(Gtk.Align.CENTER)
-
 		label2=self.poner_etiqueta('Planta')
 		self.entrada_planta = Gtk.Entry()
 		self.entrada_planta.set_text(Recursos.planta)
-		#self.entrada_planta.connect('activate',self.cambio_entradas_configuraciones)
 		self.entrada_planta.set_valign(Gtk.Align.CENTER)
-
 		label3=self.poner_etiqueta('Linea')
 		self.entrada_linea = Gtk.Entry()
 		self.entrada_linea.set_text(Recursos.linea)
-		#self.entrada_linea.connect('activate',self.cambio_entradas_configuraciones)
 		self.entrada_linea.set_valign(Gtk.Align.CENTER)
-
 		label4=self.poner_etiqueta('Proceso')
 		self.entrada_proceso = Gtk.Entry()
 		self.entrada_proceso.set_text(Recursos.proceso)
-		#self.entrada_proceso.connect('activate',self.cambio_entradas_configuraciones)
 		self.entrada_proceso.set_valign(Gtk.Align.CENTER)
 
-
-		ajuste_presion1 = Gtk.Adjustment(value=0.0, lower=0.0, upper=10.0, step_increment=1.0, page_increment=0.0, page_size=0.0)
-		ajuste_presion2 = Gtk.Adjustment(value=8.0, lower=7.0, upper=10.0, step_increment=1.0, page_increment=0.0, page_size=0.0)
-		self.spin_presion_min = Gtk.SpinButton(adjustment=ajuste_presion1, climb_rate=0.0, digits=0.0)
-		self.spin_presion_max = Gtk.SpinButton(adjustment=ajuste_presion2, climb_rate=0.0, digits=0.0)
-
-		ajuste_delta1 = Gtk.Adjustment(value=0, lower=0, upper=100, step_increment=1, page_increment=0, page_size=0)
-		ajuste_delta2 = Gtk.Adjustment(value=0, lower=0, upper=100, step_increment=1, page_increment=0, page_size=0)
-		self.spin_delta_min = Gtk.SpinButton(adjustment=ajuste_delta1, climb_rate=0.0, digits=0)
-		self.spin_delta_max = Gtk.SpinButton(adjustment=ajuste_delta2, climb_rate=0.0, digits=0)
+		ajuste_presion1 = Gtk.Adjustment(value=-8.0, lower=-8.5, upper=-6.0, step_increment=0.5, page_increment=0.0, page_size=0.0)
+		ajuste_presion2 = Gtk.Adjustment(value=-9.0, lower=-10.0, upper=-8.5, step_increment=0.5, page_increment=0.0, page_size=0.0)
+		self.spin_presion_min = Gtk.SpinButton(adjustment=ajuste_presion2, climb_rate=0.0, digits=1.0)
+		self.spin_presion_max = Gtk.SpinButton(adjustment=ajuste_presion1, climb_rate=0.0, digits=1.0)
+		ajuste_delta1 = Gtk.Adjustment(value=0.009000, lower=0.000000, upper=0.010000, step_increment=0.0001, page_increment=0, page_size=0)
+		ajuste_delta2 = Gtk.Adjustment(value=0.012000, lower=0.010000, upper=0.020000, step_increment=0.0001, page_increment=0, page_size=0)
+		self.spin_delta_min = Gtk.SpinButton(adjustment=ajuste_delta1, climb_rate=0.0, digits=6)
+		self.spin_delta_max = Gtk.SpinButton(adjustment=ajuste_delta2, climb_rate=0.0, digits=6)
 
 		label5=self.poner_etiqueta('Presion inicial min')
-		self.entrada_pimin = Gtk.Entry()
-		self.entrada_pimin.set_text(Recursos.pimin)
-		#self.entrada_pimin.connect('activate',self.cambio_entradas_configuraciones)
-		self.entrada_pimin.set_valign(Gtk.Align.CENTER)
-
 		label6=self.poner_etiqueta('Presion inicial max')
-		self.entrada_pimax = Gtk.Entry()
-		self.entrada_pimax.set_text(Recursos.pimax)
-		#self.entrada_pimax.connect('activate',self.cambio_entradas_configuraciones)
-		self.entrada_pimax.set_valign(Gtk.Align.CENTER)
-
 		label7=self.poner_etiqueta('Delta presion min')
-		self.entrada_dpmin = Gtk.Entry()
-		self.entrada_dpmin.set_text(Recursos.dpmin)
-		#self.entrada_dpmin.connect('activate',self.cambio_entradas_configuraciones)
-		self.entrada_dpmin.set_valign(Gtk.Align.CENTER)
-
 		label8=self.poner_etiqueta('Delta presion max')
-		self.entrada_dpmax = Gtk.Entry()
-		self.entrada_dpmax.set_text(Recursos.dpmax)
-		#self.entrada_dpmax.connect('activate',self.cambio_entradas_configuraciones)
-		self.entrada_dpmax.set_valign(Gtk.Align.CENTER)
 
 		grid_configuraciones.attach(label, 0, 0, 1, 1)
 		grid_configuraciones.attach_next_to(self.entrada_empresa,label,Gtk.PositionType.RIGHT,1,1)
-
 		grid_configuraciones.attach_next_to(label2,label,Gtk.PositionType.BOTTOM,1,1)
 		grid_configuraciones.attach_next_to(self.entrada_planta,label2,Gtk.PositionType.RIGHT,1,1)
-
 		grid_configuraciones.attach_next_to(label3,label2,Gtk.PositionType.BOTTOM,1,1)
 		grid_configuraciones.attach_next_to(self.entrada_linea,label3,Gtk.PositionType.RIGHT,1,1)
-
 		grid_configuraciones.attach_next_to(label4,label3,Gtk.PositionType.BOTTOM,1,1)
 		grid_configuraciones.attach_next_to(self.entrada_proceso,label4,Gtk.PositionType.RIGHT,1,1)
 
 		grid_configuraciones2.attach(label5, 0, 0, 1, 1)
-		#grid_configuraciones.attach_next_to(label5,label4,Gtk.PositionType.BOTTOM,1,1)
 		grid_configuraciones2.attach_next_to(self.spin_presion_min,label5,Gtk.PositionType.RIGHT,1,1)
-
 		grid_configuraciones2.attach_next_to(label6,label5,Gtk.PositionType.BOTTOM,1,1)
 		grid_configuraciones2.attach_next_to(self.spin_presion_max,label6,Gtk.PositionType.RIGHT,1,1)
-
 		grid_configuraciones2.attach_next_to(label7,label6,Gtk.PositionType.BOTTOM,1,1)
 		grid_configuraciones2.attach_next_to(self.spin_delta_min,label7,Gtk.PositionType.RIGHT,1,1)
-
 		grid_configuraciones2.attach_next_to(label8,label7,Gtk.PositionType.BOTTOM,1,1)
 		grid_configuraciones2.attach_next_to(self.spin_delta_max,label8,Gtk.PositionType.RIGHT,1,1)
 
-		#grid_configuraciones.attach_next_to(label2,label8,Gtk.PositionType.BOTTOM,1,1)
-		#grid_configuraciones.attach_next_to(self.entrada_planta,label2,Gtk.PositionType.RIGHT,1,1)
+		eventobox=Gtk.EventBox()
+		self.mensaje_eventobox_configuraciones=self.poner_etiqueta('Programa iniciado correctamente')
+		eventobox.add(self.mensaje_eventobox_configuraciones)
 
-		grid_principal.attach(self.action_bar, 0, 0, 2, 1)
+		grid_principal.attach(eventobox, 0, 0, 2, 1)
+		grid_principal.attach_next_to(self.action_bar,eventobox,Gtk.PositionType.BOTTOM,2,1)
 		grid_principal.attach_next_to(grid_configuraciones,self.action_bar,Gtk.PositionType.BOTTOM,1,1)
 		grid_principal.attach_next_to(grid_configuraciones2,grid_configuraciones,Gtk.PositionType.RIGHT,1,1)
 
-		#grid_principal.attach(self.action_bar, 0, 1, 2, 1)
-		#self.box_configuraciones.pack_start(grid_configuraciones, True, False, 0)
-		#self.box_configuraciones.pack_start(grid_configuraciones2, True, False, 0)
-
 		self.box_configuraciones.pack_end(grid_principal, False, False, 0)
-		#self.box_configuraciones.pack_start(self.entrada_empresa, True, False, 0)
-		#self.box_configuraciones.pack_start(label2, True, False, 0)
-
-
-
-
-		'''grid_plantas=Gtk.Grid()
-		#grid_plantas.set_column_homogeneous(True)
-
-		label=Gtk.Label()
-		label.set_text('Plantas')
-		label.set_valign(Gtk.Align.CENTER)
-
-		self.entry_agregar_planta = Gtk.Entry()
-		self.entry_agregar_planta.set_valign(Gtk.Align.CENTER)
-		button_agregar_planta = Gtk.Button.new_with_label('Agregar')
-		button_agregar_planta.set_valign(Gtk.Align.CENTER)
-		button_agregar_planta.connect("clicked", self.agregar_planta)
-		self.plantas_liststore = Gtk.ListStore(str)
-		for planta,valor in Recursos.menu_lineas_por_plantas.items():
-			self.plantas_liststore.append([planta])
-		self.treeview = Gtk.TreeView.new_with_model(self.plantas_liststore)
-		renderer = Gtk.CellRendererText()
-		renderer.set_alignment(0.5,0)
-		column = Gtk.TreeViewColumn('', renderer, text=0)
-		self.treeview.append_column(column)
-		self.tree_selection=self.treeview.get_selection()
-		self.tree_selection.connect('changed',self.seleccion_planta_configuraciones)
-		grid_plantas.attach(label, 0, 0, 2, 1)
-		grid_plantas.attach_next_to(self.entry_agregar_planta, label, Gtk.PositionType.BOTTOM, 1, 1)
-		grid_plantas.attach_next_to(button_agregar_planta,self.entry_agregar_planta, Gtk.PositionType.RIGHT, 1, 1)
-		grid_plantas.attach_next_to(self.treeview,self.entry_agregar_planta, Gtk.PositionType.BOTTOM, 2, 1)
-		#self.box_configuraciones.attach(grid_plantas,0,0,1,1)
-
-		#grid_configuraciones.attach(grid_plantas, 0, 0, 1, 1)
-		self.box_configuraciones.pack_start(grid_plantas, True, False, 0)
-
-		grid_lineas=Gtk.Grid()
-		#grid_lineas.set_column_homogeneous(True)
-		label=Gtk.Label()
-		label.set_text('Lineas')
-		label.set_valign(Gtk.Align.CENTER)
-		self.entry_agregar_linea = Gtk.Entry()
-		self.entry_agregar_linea.set_valign(Gtk.Align.CENTER)
-		button_agregar_linea = Gtk.Button.new_with_label('Agregar')
-		button_agregar_linea.set_valign(Gtk.Align.CENTER)
-		button_agregar_linea.connect("clicked", self.agregar_linea_planta)
-		self.lineas_liststore = Gtk.ListStore(str)
-		self.treeview = Gtk.TreeView.new_with_model(self.lineas_liststore)
-		renderer = Gtk.CellRendererText()
-		renderer.set_alignment(0.5,0)
-		column = Gtk.TreeViewColumn('', renderer, text=0)
-		self.treeview.append_column(column)
-		self.treeview.expand_all()
-		self.tree_selection=self.treeview.get_selection()
-		self.tree_selection.connect('changed',self.seleccion_linea_configuraciones)
-		grid_lineas.attach(label, 0, 0, 2, 1)
-		grid_lineas.attach_next_to(self.entry_agregar_linea, label, Gtk.PositionType.BOTTOM, 1, 1)
-		grid_lineas.attach_next_to(button_agregar_linea,self.entry_agregar_linea, Gtk.PositionType.RIGHT, 1, 1)
-		grid_lineas.attach_next_to(self.treeview,self.entry_agregar_linea, Gtk.PositionType.BOTTOM, 2, 1)
-		#self.box_configuraciones.attach_next_to(grid_lineas, grid_plantas, Gtk.PositionType.RIGHT, 1, 1)
-
-		#grid_configuraciones.attach_next_to(grid_lineas, grid_plantas, Gtk.PositionType.RIGHT, 1, 1)
-		self.box_configuraciones.pack_start(grid_lineas, True,False, 0)
-
-		grid_proceso=Gtk.Grid()
-		#grid_proceso.set_column_homogeneous(True)
-		label=Gtk.Label()
-		label.set_text('Procesos')
-		label.set_valign(Gtk.Align.CENTER)
-		self.entry_agregar_proceso = Gtk.Entry()
-		self.entry_agregar_proceso.set_valign(Gtk.Align.CENTER)
-		button_agregar_proceso = Gtk.Button.new_with_label('Agregar')
-		button_agregar_proceso.set_valign(Gtk.Align.CENTER)
-		button_agregar_proceso.connect("clicked", self.agregar_proceso_planta)
-		self.proceso_liststore = Gtk.ListStore(str)
-		self.treeview = Gtk.TreeView.new_with_model(self.proceso_liststore)
-		renderer = Gtk.CellRendererText()
-		renderer.set_alignment(0.5,0)
-		column = Gtk.TreeViewColumn('', renderer, text=0)
-		self.treeview.append_column(column)
-		grid_proceso.attach(label, 0, 0, 2, 1)
-		grid_proceso.attach_next_to(self.entry_agregar_proceso, label, Gtk.PositionType.BOTTOM, 1, 1)
-		grid_proceso.attach_next_to(button_agregar_proceso,self.entry_agregar_proceso, Gtk.PositionType.RIGHT, 1, 1)
-		grid_proceso.attach_next_to(self.treeview,self.entry_agregar_proceso, Gtk.PositionType.BOTTOM, 2, 1)
-		self.box_configuraciones.pack_end(grid_proceso, True, False, 0)'''
-
-		#grid___=Gtk.Grid()
-
-		#grid_configuraciones.attach_next_to(grid___,grid_configuraciones, Gtk.PositionType.BOTTOM, 1, 1)
-
-		#self.box_configuraciones.pack_start(grid_configuraciones, True, False, 0)
 	def ventana_acerca(self, widget):
 		about = Gtk.AboutDialog()
 		about.set_program_name(program)
@@ -405,63 +274,6 @@ class MyWindow(Gtk.Window):
 		about.set_logo(icon)
 		about.run()
 		about.destroy()
-		
-	def agregar_planta(self, widget):
-		if self.entry_agregar_planta.get_text() != "":
-			self.plantas_liststore.append([self.entry_agregar_planta.get_text()])
-			Recursos.plantas.append(self.entry_agregar_planta.get_text())
-	def agregar_linea_planta(self, widget):
-		if self.entry_agregar_linea.get_text() != "":
-			self.lineas_liststore.append([self.entry_agregar_linea.get_text()])
-	def agregar_proceso_planta(self, widget):
-		if self.entry_agregar_proceso.get_text() != "":
-			self.proceso_liststore.append([self.entry_agregar_proceso.get_text()])
-	def seleccion_planta_configuraciones(self,selection):
-		try:
-			(self.modelo_arbol,self.numero_iter)=selection.get_selected()
-			self.planta_seleccionada_configuraciones=self.modelo_arbol[self.numero_iter][0]
-			self.lineas_liststore.clear()
-			if self.ventana_actual!=(len(self.menu_principal)-1):
-				for linea,valor in Recursos.menu_lineas_por_plantas[self.planta_seleccionada_configuraciones].items():
-					self.lineas_liststore.append([linea])
-		except:
-			pass
-	def seleccion_linea_configuraciones(self,selection):
-		try:
-			(self.modelo_arbol,self.numero_iter)=selection.get_selected()
-			self.linea_seleccionada_configuraciones=self.modelo_arbol[self.numero_iter][0]
-			self.proceso_liststore.clear()
-			if self.ventana_actual!=2:
-				for proceso,valor in Recursos.menu_lineas_por_plantas[self.planta_seleccionada_configuraciones][self.linea_seleccionada_configuraciones].items():
-					self.proceso_liststore.append([proceso])
-		except:
-			pass
-	def cambio_ventanas_combo(self, combo):
-		self.ventana_actual = combo.get_active_iter()
-		self.liststore_lineas.clear()
-		if self.ventana_actual is not None:
-			model = combo.get_model()
-			self.ventana_actual = model[self.ventana_actual][0]
-			for linea,valor in Recursos.menu_lineas_por_plantas[self.ventana_actual].items():
-				self.liststore_lineas.append([linea])
-		self.lineas_combo.set_active(0)
-	def cambio_lineas_combo(self, combo):
-		self.linea_actual = combo.get_active_iter()
-		self.liststore_procesos.clear()
-		if self.linea_actual is not None:
-			model = combo.get_model()
-			self.linea_actual = model[self.linea_actual][0]
-		try:
-			for proceso,valor in Recursos.menu_lineas_por_plantas[self.ventana_actual][self.linea_actual].items():
-				self.liststore_procesos.append([proceso])
-		except:
-			pass
-		self.procesos_combo.set_active(0)
-	def cambio_procesos_combo(self, combo):
-		self.proceso_actual = combo.get_active_iter()
-		if self.proceso_actual is not None:
-			model = combo.get_model()
-			self.proceso_actual = model[self.proceso_actual][0]
 	def ir_ventana_configuracion(self,button):
 		if self.menu_principal.get_current_page()==0:
 			self.menu_principal.set_current_page(1)
@@ -494,48 +306,121 @@ class MyWindow(Gtk.Window):
 				self.liststore_base_datos.append(valores_semanal[valor])
 		self.current_filter_language = widget.get_text()
 		self.language_filter.refilter()
-
 	def cancelar_analisis(self,widget):
 		self.serie_analizando.set_text('')
 		self.entrada_escaner.set_text('')
 		self.analizando=False
 		self.entrada_escaner.set_editable(True)
-
-
+	def conectar_puerto(self,port=None):
+		if port==None:
+			list = serial.tools.list_ports.comports()
+			self.serial_ports = []
+			for element in list:
+				self.serial_ports.append(element.device)
+			for puerto in self.serial_ports:
+				try:
+					self.puerto=puerto
+					self.puerto_conectado = serial.Serial(port=self.puerto,baudrate=9600,timeout=25)
+					self.puerto_conectado.isOpen()
+					self.serial_port=True
+				except:
+					self.serial_port=False
+		else:
+			try:
+				self.puerto=self.serial_ports[port]
+				self.puerto_conectado = serial.Serial(port=self.puerto,baudrate=9600,timeout=25)
+				self.puerto_conectado.isOpen()
+				self.serial_port=True
+			except:
+				self.serial_port=False
+				self.mensaje(self.puerto+'\tFallo al conectar')
 	def cambio_entradas_configuraciones(self,widget):
+		self.conectar_puerto(port=self.puertos_combo.get_active())
 		Recursos.nombre_empresa=self.entrada_empresa.get_text()
 		Recursos.planta=self.entrada_planta.get_text()
 		Recursos.linea=self.entrada_linea.get_text()
 		Recursos.proceso=self.entrada_proceso.get_text()
-		Recursos.pimin=self.entrada_pimin.get_text()
-		Recursos.pimax=self.entrada_pimax.get_text()
-		Recursos.dpmin=self.entrada_dpmin.get_text()
-		Recursos.dpmax=self.entrada_dpmax.get_text()
+		Recursos.pimin=self.spin_presion_min.get_text()
+		Recursos.pimax=self.spin_presion_max.get_text()
+		Recursos.dpmin=self.spin_delta_min.get_text()
+		Recursos.dpmax=self.spin_delta_max.get_text()
 		Recursos.guardar_configuraciones()
 		self.hb.props.subtitle = Recursos.nombre_empresa
 		self.url_estacion.set_text('	'+Recursos.planta+'  -  '+Recursos.linea+'  -  '+Recursos.proceso)
 	def entrada_escaner_enter(self,widget):
 		if widget.get_text()!='':
+			self.serie_analizando.set_text(widget.get_text())
 			self.entrada_escaner.set_editable(False)
 			self.analizando=True
-			self.serie_analizando.set_text(widget.get_text())
+			time.sleep(1)
 			self.guardar_analisis()
 	def guardar_analisis(self):
-		paso_actual=str(len(Recursos.base_de_datos)+1)
-		datos=[self.entrada_escaner.get_text(),'7.5','7.2','0.3','PASO',self.fecha,self.hora,self.weeknum]
-		Recursos.base_de_datos[paso_actual]=datos
-		Recursos.guardar_base_datos(paso_actual,datos)
-		self.liststore_base_datos.clear()
-		valores_semanal=[]
-		for valor in Recursos.base_de_datos.keys():
-			if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
-				valores_semanal.append(Recursos.base_de_datos[valor])
-		for valor in range(len(valores_semanal)-1,-1,-1):
-			self.liststore_base_datos.append(valores_semanal[valor])
+		self.now=datetime.datetime.now()
+		self.weeknum=str(datetime.date(self.now.year, self.now.month, self.now.day).isocalendar()[1])
+		self.fecha=str(self.now.month)+'/'+str(self.now.day)+'/'+str(self.now.year)
+		self.hora=str(self.now.hour)+':'+str(self.now.minute)+':'+str(self.now.second)
+
+		try:
+			datos_cincinati=[]
+			for i in range(5):
+				cadena=self.puerto_conectado.readline()
+				if len(cadena)>150:
+					datos_cincinati.append(str(cadena))
+					break
+
+			for dato in datos_cincinati:
+				if len(dato)>150:
+					#print('presion inicial',dato[161:170])
+					#print('presion final',dato[95:104])
+					#print('delta presion1',dato[74:82])
+					#print('delta presion2',dato[140:148])
+					#print('hora',datos_cincinati[2][22:30])
+					#print('fecha',datos_cincinati[2][35:43])
+					presion_inicial=dato[161:170]
+					presion_final=dato[95:104]
+					delta_presion=dato[74:82]
+			presion_inicial='-8.583227'
+			presion_final='-8.568699'
+			delta_presion='0.020314'
+			paso_actual=str(len(Recursos.base_de_datos)+1)
+			if float(delta_presion)>float(self.spin_delta_min.get_text()) and float(delta_presion)<float(self.spin_delta_max.get_text()):
+				estado='PASO'
+			else:
+				estado='FALLO'
+			datos=[self.entrada_escaner.get_text(),presion_inicial,presion_final,delta_presion,estado,self.fecha,self.hora,self.weeknum]
+			Recursos.base_de_datos[paso_actual]=datos
+			Recursos.guardar_base_datos(paso_actual,datos)
+			self.liststore_base_datos.clear()
+			valores_semanal=[]
+			for valor in Recursos.base_de_datos.keys():
+				if Recursos.base_de_datos[valor][7]==str(self.weeknum):	
+					valores_semanal.append(Recursos.base_de_datos[valor])
+			for valor in range(len(valores_semanal)-1,-1,-1):
+				self.liststore_base_datos.append(valores_semanal[valor])
+			self.mensaje(self.entrada_escaner.get_text()+'\t -'+estado)
+
+		except:
+			self.mensaje('Falla en serial')
 		self.serie_analizando.set_text('')
 		self.entrada_escaner.set_text('')
 		self.analizando=False
 		self.entrada_escaner.set_editable(True)
+	def mensaje(self,texto):
+		self.mensaje_eventobox_configuraciones.set_text(texto)
+		self.mensaje_eventobox_pagina.set_text(texto)
+
+
+	def escuchando_puerto(self):
+		while True:
+			#print('lobezno')
+			if self.analizando and self.serial_port:
+				datos_cincinati=[]
+				print('escarcha')
+				cadena=self.puerto_conectado.readline()
+				if len(cadena)>150:
+					datos_cincinati.append(str(cadena))
+
+
 
 	def on_switch_activated(self, switch, gparam):
 		if switch.get_active():
@@ -543,7 +428,6 @@ class MyWindow(Gtk.Window):
 		else:
 			state = "off"
 		#print("Switch was turned", state)
-		
 
 	def ventana_ppap(self):
 		self.image = Gtk.Image.new_from_file("wallet.png")

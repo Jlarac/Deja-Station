@@ -40,6 +40,5 @@ class datos(object):
 			parser.set(seccion, nombres[i], dato)
 		with open('Linea_prueba.cfg', 'w') as configfile:
 			parser.write(configfile)
-
 data=datos()
 data.cargar_configuraciones()
